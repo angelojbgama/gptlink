@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gptlink.common.types import ApprovalStatus
+from gptlink.common.types import ApprovalStatus, DeviceStatus
 from gptlink.persistence.models import (
     Approval,
     AuditEvent,
@@ -43,6 +43,31 @@ class Repository[Entity: Base, Key]:
 
 class DeviceRepository(Repository[Device, UUID]):
     model = Device
+
+    async def mark_online(self, device_id: UUID, *, now: datetime) -> bool:
+        """Presence never overrides concurrent revocation."""
+        result = await self.session.scalar(
+            update(Device)
+            .where(
+                Device.device_id == device_id,
+                Device.status != DeviceStatus.REVOKED,
+                Device.revoked_at.is_(None),
+            )
+            .values(status=DeviceStatus.ONLINE, last_seen=now)
+            .returning(Device.device_id)
+        )
+        return result is not None
+
+    async def mark_offline(self, device_id: UUID) -> None:
+        await self.session.execute(
+            update(Device)
+            .where(
+                Device.device_id == device_id,
+                Device.status != DeviceStatus.REVOKED,
+                Device.revoked_at.is_(None),
+            )
+            .values(status=DeviceStatus.OFFLINE)
+        )
 
     async def list(self) -> list[Device]:
         return list(

@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     max_file_bytes: int = Field(default=1_048_576, ge=1)
     max_search_results: int = Field(default=1_000, ge=1)
     max_job_output_bytes: int = Field(default=1_048_576, ge=1)
+    heartbeat_interval: float = Field(default=10, gt=0, allow_inf_nan=False)
+    offline_threshold: float = Field(default=30, gt=0, allow_inf_nan=False)
+    handshake_timeout: float = Field(default=10, gt=0, allow_inf_nan=False)
 
     @field_validator("agent_roots")
     @classmethod
