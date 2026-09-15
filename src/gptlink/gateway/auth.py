@@ -22,10 +22,19 @@ class ReplayError(GPTLinkError):
     """A mutation request ID has already been claimed."""
 
 
+def _encode_device_token(token: str) -> bytes:
+    # Issued tokens are ASCII. Reject other input before an encoder can attach
+    # the original secret to a UnicodeEncodeError or its exception chain.
+    if not token.isascii():
+        raise AuthenticationError("invalid device credential")
+    return token.encode("ascii")
+
+
 def hash_device_token(token: str) -> str:
     """Salted SHA-256 is suitable for our independently random 256-bit tokens."""
+    encoded = _encode_device_token(token)
     salt = secrets.token_bytes(16)
-    digest = hashlib.sha256(salt + token.encode()).hexdigest()
+    digest = hashlib.sha256(salt + encoded).hexdigest()
     return f"sha256${salt.hex()}${digest}"
 
 
@@ -37,7 +46,7 @@ def _verify_device_token(token: str, stored_hash: str) -> bool:
             return False
     except ValueError:
         return False
-    actual = hashlib.sha256(salt + token.encode()).digest()
+    actual = hashlib.sha256(salt + _encode_device_token(token)).digest()
     return hmac.compare_digest(actual, expected)
 
 

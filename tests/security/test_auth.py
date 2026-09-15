@@ -2,7 +2,9 @@
 
 import asyncio
 import base64
+import json
 import re
+import traceback
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -344,3 +346,33 @@ async def test_malformed_secret_still_spends_attempt_on_known_locator(database):
         await service.redeem(offer.code[:4] + "-bad", metadata())
     with pytest.raises(PairingError):
         await service.redeem(offer.code, metadata())
+
+
+@pytest.mark.parametrize("escaped", [r"\ud800", r"\udfff", r"\ud800tail\udfff"])
+@pytest.mark.parametrize("entrypoint", ["authenticate", "hash_device_token"])
+async def test_malformed_unicode_token_fails_closed_without_echo(
+    database, caplog, escaped, entrypoint
+):
+    from gptlink.gateway.auth import (
+        AuthenticationError,
+        DeviceAuthenticator,
+        hash_device_token,
+    )
+    from gptlink.gateway.pairing import PairingService
+
+    # JSON permits escaped lone surrogates; decoding does not guarantee UTF-8 encoding.
+    token = json.loads('"untrusted-secret-' + escaped + '"')
+    if entrypoint == "authenticate":
+        service = PairingService(database)
+        credential = await service.redeem((await service.create_code()).code, metadata())
+    with pytest.raises(AuthenticationError) as error:
+        if entrypoint == "authenticate":
+            await DeviceAuthenticator(database).authenticate(credential.device_id, token)
+        else:
+            hash_device_token(token)
+    assert error.value.args == ("invalid device credential",)
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
+    rendered = "".join(traceback.format_exception(error.value))
+    assert "untrusted-secret-" not in rendered
+    assert "untrusted-secret-" not in caplog.text
