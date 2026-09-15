@@ -8,7 +8,7 @@ JSON fields should be replaced as a whole to persist edits.
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,6 +68,26 @@ class DeviceRepository(Repository[Device, UUID]):
             )
             .values(status=DeviceStatus.OFFLINE)
         )
+
+    async def touch(self, device_id: UUID, *, now: datetime) -> bool:
+        """Refresh presence without erasing BUSY/DEGRADED operational state."""
+        result = await self.session.scalar(
+            update(Device)
+            .where(
+                Device.device_id == device_id,
+                Device.status != DeviceStatus.REVOKED,
+                Device.revoked_at.is_(None),
+            )
+            .values(
+                last_seen=now,
+                status=case(
+                    (Device.status == DeviceStatus.OFFLINE, DeviceStatus.ONLINE),
+                    else_=Device.status,
+                ),
+            )
+            .returning(Device.device_id)
+        )
+        return result is not None
 
     async def list(self) -> list[Device]:
         return list(

@@ -76,7 +76,6 @@ async def agent_websocket(socket: WebSocket) -> None:
         await DeviceAuthenticator(socket.app.state.database).authenticate(
             hello.device_id, hello.payload.token
         )
-        connection = await registry.register(hello.device_id, socket)
         welcome = AgentWelcome(
             protocol_version=1,
             type="agent.welcome",
@@ -85,6 +84,7 @@ async def agent_websocket(socket: WebSocket) -> None:
             payload=AgentWelcomePayload(selected_version=1),
         )
         await socket.send_text(encode_message(welcome))
+        connection = await registry.register(hello.device_id, socket)
         while True:
             message = await receive_message(socket)
             if message.device_id != connection.device_id:

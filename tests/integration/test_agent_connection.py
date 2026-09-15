@@ -2,7 +2,9 @@
 
 import asyncio
 import json
+import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -113,6 +115,7 @@ def test_hello_heartbeat_and_disconnect_update_device(gateway, caplog):
             "type": "agent.welcome",
             "payload": {"selected_version": 1},
         }
+        wait_for_status(gateway, DeviceStatus.ONLINE)
         connected = read_device(gateway)
         assert connected.status is DeviceStatus.ONLINE
         assert connected.last_seen is not None
@@ -351,5 +354,231 @@ def test_cancellation_during_replacement_does_not_leave_orphan_online(gateway):
         async with app.state.database.transaction() as session:
             device = await DeviceRepository(session).get(device_id)
             assert device.status is DeviceStatus.OFFLINE
+
+    client.portal.call(exercise)
+
+
+def test_monitor_recovers_after_database_failure(gateway, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    client, app, database, device_id, token = gateway
+    transaction = database.transaction
+    failing = False
+
+    @asynccontextmanager
+    async def controlled_transaction():
+        if failing:
+            raise OperationalError("test", {}, Exception("temporarily unavailable"))
+        async with transaction() as session:
+            yield session
+
+    monkeypatch.setattr(database, "transaction", controlled_transaction)
+    with client.websocket_connect("/agent/ws") as ws:
+        ws.send_json(hello(device_id, token))
+        ws.receive_json()
+        wait_for_status(gateway, DeviceStatus.ONLINE)
+        failing = True
+        deadline = time.monotonic() + 2
+        while client.get("/ready").status_code != 503 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert client.get("/ready").status_code == 503
+        failing = False
+        deadline = time.monotonic() + 2
+        while client.get("/ready").status_code != 200 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert client.get("/ready").status_code == 200
+        with pytest.raises(WebSocketDisconnect) as error:
+            ws.receive_json()
+        assert error.value.code == 4408
+        assert read_device(gateway).status is DeviceStatus.OFFLINE
+
+
+@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+def test_cancel_at_sqlite_commit_cannot_orphan_online(gateway, monkeypatch, phase):
+    client, app, database, device_id, _ = gateway
+    transaction = database.transaction
+
+    async def exercise():
+        committed, release = asyncio.Event(), asyncio.Event()
+        mark_online = DeviceRepository.mark_online
+
+        async def controlled_mark_online(repository, *args, **kwargs):
+            result = await mark_online(repository, *args, **kwargs)
+            repository.session.info["registration"] = True
+            return result
+
+        @asynccontextmanager
+        async def controlled_transaction():
+            async with transaction() as session:
+                yield session
+                if session.info.get("registration") and phase == "before_commit":
+                    committed.set()
+                    await release.wait()
+            if session.info.get("registration") and phase == "after_commit":
+                committed.set()
+                await release.wait()
+
+        class Socket:
+            async def close(self, code):
+                pass
+
+        monkeypatch.setattr(database, "transaction", controlled_transaction)
+        monkeypatch.setattr(DeviceRepository, "mark_online", controlled_mark_online)
+        task = asyncio.create_task(app.state.registry.register(device_id, Socket()))
+        await committed.wait()
+        task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        async with transaction() as session:
+            device = await DeviceRepository(session).get(device_id)
+            assert device.status is DeviceStatus.OFFLINE
+
+    client.portal.call(exercise)
+
+
+def test_welcome_precedes_dispatch_while_old_close_is_suspended(gateway, monkeypatch):
+    from gptlink.gateway import registry as registry_module
+    from gptlink.protocol.codec import decode_message
+
+    client, app, _, device_id, token = gateway
+    original_close = registry_module.close_connection
+    closing, release = asyncio.Event(), asyncio.Event()
+
+    async def suspended_close(connection, code):
+        if code == 4409:
+            closing.set()
+            await release.wait()
+        await original_close(connection, code)
+
+    monkeypatch.setattr(registry_module, "close_connection", suspended_close)
+    with client.websocket_connect("/agent/ws") as old:
+        old.send_json(hello(device_id, token))
+        old.receive_json()
+        with client.websocket_connect("/agent/ws") as current:
+            current.send_json(hello(device_id, token))
+            client.portal.call(closing.wait)
+            message = envelope(device_id, "process.list")
+            try:
+                client.portal.call(
+                    app.state.registry.send, device_id, decode_message(json.dumps(message))
+                )
+                assert current.receive_json()["type"] == "agent.welcome"
+                assert current.receive_json() == message
+            finally:
+                client.portal.call(release.set)
+
+
+@pytest.mark.parametrize("status", ["BUSY", "DEGRADED", "OFFLINE", "REVOKED"])
+def test_heartbeat_preserves_operational_status(gateway, status):
+    client, _, database, device_id, token = gateway
+    state = DeviceStatus(status)
+
+    async def set_status():
+        async with database.transaction() as session:
+            device = await DeviceRepository(session).get(device_id)
+            device.status = state
+
+    with client.websocket_connect("/agent/ws") as ws:
+        ws.send_json(hello(device_id, token))
+        ws.receive_json()
+        wait_for_status(gateway, DeviceStatus.ONLINE)
+        client.portal.call(set_status)
+        before = read_device(gateway).last_seen
+        ws.send_json(envelope(device_id, "heartbeat.ping", timestamp=datetime.now(UTC).isoformat()))
+        if status == "REVOKED":
+            with pytest.raises(WebSocketDisconnect) as error:
+                ws.receive_json()
+            assert error.value.code == 4401
+            assert read_device(gateway).status is state
+            assert read_device(gateway).last_seen == before
+        else:
+            assert ws.receive_json()["type"] == "heartbeat.pong"
+            device = read_device(gateway)
+            assert device.status is (DeviceStatus.ONLINE if status == "OFFLINE" else state)
+            assert device.last_seen > before
+
+
+@pytest.mark.parametrize("status", ["BUSY", "DEGRADED", "OFFLINE"])
+def test_new_registration_promotes_nonrevoked_device_online(gateway, status):
+    client, _, database, device_id, token = gateway
+    state = DeviceStatus(status)
+
+    async def set_status():
+        async with database.transaction() as session:
+            device = await DeviceRepository(session).get(device_id)
+            device.status = state
+
+    client.portal.call(set_status)
+    with client.websocket_connect("/agent/ws") as ws:
+        ws.send_json(hello(device_id, token))
+        assert ws.receive_json()["type"] == "agent.welcome"
+        wait_for_status(gateway, DeviceStatus.ONLINE)
+
+
+def test_failed_monitor_does_not_skip_shutdown_cleanup(tmp_path, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    from gptlink.gateway.app import create_app
+
+    settings = Settings(
+        _env_file=None,
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'shutdown.db'}",
+        heartbeat_interval=0.01,
+    )
+    database = Database(settings.database_url)
+    app = create_app(settings, database=database)
+    attempted = threading.Event()
+    closed = []
+    registry_close, database_close = app.state.registry.close, database.close
+
+    async def failed_expire(threshold):
+        attempted.set()
+        raise OperationalError("test", {}, Exception("unavailable"))
+
+    async def close_registry():
+        await registry_close()
+        closed.append("registry")
+
+    async def close_database():
+        await database_close()
+        closed.append("database")
+
+    monkeypatch.setattr(app.state.registry, "expire", failed_expire)
+    monkeypatch.setattr(app.state.registry, "close", close_registry)
+    monkeypatch.setattr(database, "close", close_database)
+    with TestClient(app):
+        assert attempted.wait(timeout=2)
+    assert closed == ["registry", "database"]
+
+
+def test_registry_shutdown_closes_socket_even_if_database_is_unavailable(gateway, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    from gptlink.gateway.registry import ConnectionUnavailable
+    from gptlink.protocol.codec import decode_message
+
+    client, app, database, device_id, _ = gateway
+
+    async def exercise():
+        closed = []
+
+        class Socket:
+            async def close(self, code):
+                closed.append(code)
+
+        @asynccontextmanager
+        async def failed_transaction():
+            raise OperationalError("test", {}, Exception("unavailable"))
+            yield
+
+        await app.state.registry.register(device_id, Socket())
+        with monkeypatch.context() as patch:
+            patch.setattr(database, "transaction", failed_transaction)
+            await app.state.registry.close()
+        assert closed == [1001]
+        message = decode_message(json.dumps(envelope(device_id, "process.list")))
+        with pytest.raises(ConnectionUnavailable):
+            await app.state.registry.send(device_id, message)
 
     client.portal.call(exercise)

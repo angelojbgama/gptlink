@@ -47,6 +47,20 @@ hash com salt é persistido no Gateway. Depois de autenticar e negociar a versã
 ou limiar sem heartbeat marca o device `OFFLINE`. Reconexão usa backoff
 exponencial com jitter e reutiliza a credencial, independentemente de IP/NAT.
 
+O Gateway envia `agent.welcome` antes de publicar a conexão para dispatch.
+Commit de presença e publicação são protegidos contra cancelamento: uma
+operação interrompida aguarda o resultado e limpa a presença confirmada antes
+de terminar. Conexões substituídas são fechadas sem manter lock durante I/O.
+Um novo registro autenticado promove estados não revogados a `ONLINE`.
+Heartbeats preservam `BUSY` e `DEGRADED`, atualizam somente `last_seen` nesses
+estados e podem promover `OFFLINE` conectado a `ONLINE`; nunca alteram
+`REVOKED` nem devices com `revoked_at` preenchido.
+
+O monitor verifica o banco mesmo sem conexões. Falhas tornam `/ready` 503;
+um ciclo completo saudável restaura 200. O shutdown sempre fecha registry e
+banco, mesmo após falha do monitor. Se o banco estiver indisponível durante
+shutdown, os sockets ainda fecham, mas a persistência de `OFFLINE` é best effort.
+
 Cada envelope leva `protocol_version`, `type`, `request_id`, `device_id` e
 `payload`. Requests mutáveis têm `request_id` único persistido/auditado; uma
 repetição retorna conflito sem repetir o efeito. Respostas e eventos carregam o

@@ -1,11 +1,13 @@
 """Current connections and serialized, revocation-safe presence transitions."""
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from time import monotonic
 from uuid import UUID
 
 import anyio
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from gptlink.gateway.auth import AuthenticationError
@@ -14,6 +16,8 @@ from gptlink.persistence.models import utc_now
 from gptlink.persistence.repositories import DeviceRepository
 from gptlink.protocol.codec import encode_message
 from gptlink.protocol.messages import ProtocolMessage
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionUnavailable(Exception):
@@ -48,12 +52,26 @@ class ConnectionRegistry:
 
     async def register(self, device_id: UUID, socket: WebSocket) -> Connection:
         connection = Connection(device_id, socket)
-        async with self._lock:
-            async with self.database.transaction() as session:
-                if not await DeviceRepository(session).mark_online(device_id, now=utc_now()):
-                    raise AuthenticationError("invalid device credential")
-            old = self._connections.get(device_id)
-            self._connections[device_id] = connection
+        # Commit and publication run in one shielded task. A caller cancelled
+        # inside SQLAlchemy's commit/exit must observe the final outcome before
+        # cleanup, rather than abandoning an already committed ONLINE device.
+        publication = asyncio.create_task(self._publish(connection))
+        try:
+            with anyio.CancelScope(shield=True):
+                old = await asyncio.shield(publication)
+        except asyncio.CancelledError:
+            with anyio.CancelScope(shield=True):
+                while not publication.done():
+                    try:
+                        await asyncio.shield(publication)
+                    except asyncio.CancelledError:
+                        continue
+                old = publication.result()
+                await self.disconnect(connection)
+                await close_connection(connection, 1001)
+                if old is not None:
+                    await close_connection(old, 4409)
+            raise
         if old is not None:
             try:
                 await close_connection(old, 4409)
@@ -65,14 +83,22 @@ class ConnectionRegistry:
                 raise
         return connection
 
+    async def _publish(self, connection: Connection) -> Connection | None:
+        device_id = connection.device_id
+        async with self._lock:
+            async with self.database.transaction() as session:
+                if not await DeviceRepository(session).mark_online(device_id, now=utc_now()):
+                    raise AuthenticationError("invalid device credential")
+            old = self._connections.get(device_id)
+            self._connections[device_id] = connection
+            return old
+
     async def touch(self, connection: Connection) -> None:
         async with self._lock:
             if self._connections.get(connection.device_id) is not connection:
                 raise ConnectionUnavailable("connection replaced")
             async with self.database.transaction() as session:
-                if not await DeviceRepository(session).mark_online(
-                    connection.device_id, now=utc_now()
-                ):
+                if not await DeviceRepository(session).touch(connection.device_id, now=utc_now()):
                     raise AuthenticationError("invalid device credential")
             connection.last_seen = monotonic()
 
@@ -111,6 +137,15 @@ class ConnectionRegistry:
             await close_connection(connection, 4408)
 
     async def close(self) -> None:
-        for connection in list(self._connections.values()):
-            await self.disconnect(connection)
+        async with self._lock:
+            connections = list(self._connections.values())
+            for connection in connections:
+                try:
+                    async with self.database.transaction() as session:
+                        await DeviceRepository(session).mark_offline(connection.device_id)
+                except SQLAlchemyError as error:
+                    logger.warning("Shutdown presence update failed (%s)", type(error).__name__)
+                finally:
+                    del self._connections[connection.device_id]
+        for connection in connections:
             await close_connection(connection, 1001)

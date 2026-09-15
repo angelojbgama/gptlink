@@ -63,7 +63,13 @@ def test_common_enums_have_stable_wire_values() -> None:
         "READ_WRITE",
         "FULL_ACCESS",
     }
-    assert {member.value for member in DeviceStatus} == {"ONLINE", "OFFLINE", "REVOKED"}
+    assert {member.value for member in DeviceStatus} == {
+        "ONLINE",
+        "OFFLINE",
+        "BUSY",
+        "DEGRADED",
+        "REVOKED",
+    }
     assert {member.value for member in JobStatus} == {
         "PENDING",
         "RUNNING",

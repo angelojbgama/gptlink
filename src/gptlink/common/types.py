@@ -27,6 +27,8 @@ class DeviceStatus(StrEnum):
 
     ONLINE = "ONLINE"
     OFFLINE = "OFFLINE"
+    BUSY = "BUSY"
+    DEGRADED = "DEGRADED"
     REVOKED = "REVOKED"
 
 

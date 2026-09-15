@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from gptlink.persistence.models import Base
@@ -36,3 +36,8 @@ class Database:
 
     async def close(self) -> None:
         await self.engine.dispose()
+
+    async def check(self) -> None:
+        """Probe an actual DB round-trip, including when no devices are online."""
+        async with self.transaction() as session:
+            await session.execute(select(1))

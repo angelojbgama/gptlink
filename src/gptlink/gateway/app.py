@@ -1,7 +1,8 @@
 """Gateway application factory and database/heartbeat lifecycle."""
 
 import asyncio
-from contextlib import asynccontextmanager, suppress
+import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
@@ -11,6 +12,8 @@ from gptlink.gateway.registry import ConnectionRegistry
 from gptlink.gateway.websocket import router as websocket_router
 from gptlink.persistence.database import Database
 
+logger = logging.getLogger(__name__)
+
 
 def create_app(settings: Settings, *, database: Database | None = None) -> FastAPI:
     database = database if database is not None else Database(settings.database_url)
@@ -19,7 +22,15 @@ def create_app(settings: Settings, *, database: Database | None = None) -> FastA
     async def monitor() -> None:
         while True:
             await asyncio.sleep(min(settings.heartbeat_interval, settings.offline_threshold))
-            await registry.expire(settings.offline_threshold)
+            try:
+                await database.check()
+                await registry.expire(settings.offline_threshold)
+            except Exception as error:
+                app.state.ready = False
+                # Exception text can contain SQL parameters; only log its class.
+                logger.warning("Gateway monitor cycle failed (%s)", type(error).__name__)
+            else:
+                app.state.ready = True
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -31,14 +42,15 @@ def create_app(settings: Settings, *, database: Database | None = None) -> FastA
             yield
         finally:
             app.state.ready = False
-            if task is not None:
-                task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await task
             try:
-                await registry.close()
+                if task is not None:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
             finally:
-                await database.close()
+                try:
+                    await registry.close()
+                finally:
+                    await database.close()
 
     app = FastAPI(lifespan=lifespan)
     app.state.settings = settings
