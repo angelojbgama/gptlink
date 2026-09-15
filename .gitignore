@@ -18,3 +18,4 @@ venv/
 
 *.pem
 *.key
+.worktrees/
