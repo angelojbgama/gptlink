@@ -105,7 +105,7 @@ class PairingService:
                     valid = await asyncio.to_thread(self.hasher.verify, record.code_hash, code)
                 except (VerificationError, InvalidHashError):
                     pass
-            if valid:
+            if valid and record is not None:
                 now = self.clock()
                 # A code can expire while its memory-hard verification is running.
                 if record.expires_at > now:

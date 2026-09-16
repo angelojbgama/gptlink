@@ -5,6 +5,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from mcp.server.transport_security import TransportSecuritySettings
 
 from gptlink.common.config import Settings
 from gptlink.gateway.health import router as health_router
@@ -72,7 +73,15 @@ def create_app(settings: Settings, *, database: Database | None = None) -> FastA
     app.include_router(health_router)
     app.include_router(pairing_router)
     app.include_router(websocket_router)
-    mcp_app = mcp_server.streamable_http_app(stateless_http=True, host=settings.gateway_host)
+    mcp_app = mcp_server.streamable_http_app(
+        stateless_http=True,
+        host=settings.gateway_host,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=settings.mcp_allowed_hosts,
+            allowed_origins=settings.mcp_allowed_origins,
+        ),
+    )
     token = settings.mcp_token.get_secret_value() if settings.mcp_token is not None else None
     app.mount(
         "/",

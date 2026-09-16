@@ -30,6 +30,7 @@ from gptlink.protocol.messages import (
     HeartbeatPing,
     HeartbeatPingPayload,
     HeartbeatPong,
+    ProtocolMessage,
 )
 
 from .dispatcher import AgentDispatcher
@@ -179,7 +180,7 @@ class AgentClient:
             )
             await socket.send(encode_message(hello))
             welcome = decode_message(
-                await asyncio.wait_for(socket.recv(), self.settings.handshake_timeout)
+                await asyncio.wait_for(_receive_text(socket), self.settings.handshake_timeout)
             )
             if not isinstance(welcome, AgentWelcome) or welcome.device_id != device_id:
                 raise ConnectionError("invalid Gateway welcome")
@@ -187,13 +188,14 @@ class AgentClient:
             try:
                 while not stop_event.is_set():
                     message = await asyncio.wait_for(
-                        socket.recv(), self.settings.heartbeat_interval * 2
+                        _receive_text(socket), self.settings.heartbeat_interval * 2
                     )
                     decoded = decode_message(message)
                     if decoded.device_id != device_id:
                         raise ConnectionError("Gateway identity mismatch")
                     if isinstance(decoded, HeartbeatPong):
                         continue
+                    response: ProtocolMessage
                     if self.dispatcher is None:
                         response = Error(
                             protocol_version=1,
@@ -233,3 +235,10 @@ def urlparse(value: str):
     from urllib.parse import urlparse as parse
 
     return parse(value)
+
+
+async def _receive_text(socket: ClientConnection) -> str:
+    message = await socket.recv()
+    if not isinstance(message, str):
+        raise ConnectionError("binary Gateway message is not allowed")
+    return message

@@ -1,0 +1,40 @@
+services:
+  gateway:
+    build:
+      context: .
+    image: gptlink-gateway:0.1.0
+    container_name: gptlink-gateway
+    restart: unless-stopped
+    read_only: true
+    environment:
+      GPTLINK_ENV: production
+      GPTLINK_GATEWAY_HOST: 0.0.0.0
+      GPTLINK_GATEWAY_PORT: 8000
+      GPTLINK_GATEWAY_URL: ${GPTLINK_PUBLIC_URL:-https://gptlink.example.com}
+      GPTLINK_DATABASE_URL: sqlite+aiosqlite:////data/gptlink.db
+      GPTLINK_MCP_TOKEN: ${GPTLINK_MCP_TOKEN:?set GPTLINK_MCP_TOKEN to a strong secret}
+      GPTLINK_MCP_ALLOWED_HOSTS: ${GPTLINK_MCP_ALLOWED_HOSTS:-["gptlink.example.com","127.0.0.1:8000","localhost:8000"]}
+      GPTLINK_MCP_ALLOWED_ORIGINS: ${GPTLINK_MCP_ALLOWED_ORIGINS:-["https://gptlink.example.com"]}
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - "gptlink-data:/data"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+
+volumes:
+  gptlink-data:

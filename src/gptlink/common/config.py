@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     handshake_timeout: float = Field(default=10, gt=0, allow_inf_nan=False)
     mcp_token: SecretStr | None = None
     mcp_caller: str = Field(default="mcp-single-user", min_length=1, max_length=200)
+    mcp_allowed_hosts: list[str] = Field(
+        default_factory=lambda: ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    )
+    mcp_allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://127.0.0.1:*",
+            "http://localhost:*",
+            "http://[::1]:*",
+        ]
+    )
 
     @field_validator("mcp_token")
     @classmethod
@@ -65,4 +75,6 @@ class Settings(BaseSettings):
         if self.env == "production" and urlparse(self.gateway_url).scheme not in {"https", "wss"}:
             msg = "production gateway_url must use HTTPS or WSS"
             raise ValueError(msg)
+        if self.env == "production" and self.mcp_token is None:
+            raise ValueError("production requires mcp_token")
         return self

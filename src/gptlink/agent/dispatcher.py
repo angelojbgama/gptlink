@@ -76,10 +76,10 @@ class AgentDispatcher:
             )
             return {"written": True}
         if isinstance(message, FilesystemSearch):
-            entries = await asyncio.to_thread(
+            search_entries = await asyncio.to_thread(
                 self.filesystem.search, message.payload.path, message.payload.query
             )
-            return [asdict(entry) for entry in entries]
+            return [asdict(entry) for entry in search_entries]
         if isinstance(message, GitStatus):
             return {"output": await self.git.status(message.payload.path)}
         if isinstance(message, GitDiff):

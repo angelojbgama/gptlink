@@ -106,6 +106,11 @@ def test_production_rejects_non_tls_gateway_url() -> None:
         Settings(env="production", gateway_url="http://gateway.example.test")
 
 
+def test_production_requires_mcp_bearer() -> None:
+    with pytest.raises(ValidationError, match="requires mcp_token"):
+        Settings(env="production", gateway_url="https://gateway.example.test")
+
+
 def test_agent_root_cannot_be_filesystem_root() -> None:
     """An Agent policy never grants access to the entire host filesystem."""
     with pytest.raises(ValidationError, match="must not include /"):

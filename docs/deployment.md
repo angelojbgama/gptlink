@@ -26,11 +26,24 @@ específicos e nunca com `/` ou `C:\\`.
 
 ## Docker e banco
 
-O `Dockerfile`/Compose será adicionado quando a imagem do Gateway estiver
-fechada. O container deverá rodar sem root, montar somente o volume de dados e
-expor healthcheck; Docker não está instalado no VPS de desenvolvimento atual.
+Defina secrets apenas no ambiente do operador e valide a configuração:
 
-## Cloudflare Tunnel (futuro)
+```bash
+export GPTLINK_MCP_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+export GPTLINK_PUBLIC_URL=https://gptlink.example.com
+docker compose config
+docker compose build
+docker compose up -d
+docker compose ps
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/ready
+```
+
+O container `gptlink-gateway` roda como usuário sem privilégios, persiste apenas
+`/data` e publica a porta somente em loopback. Não há montagem de Docker socket,
+home, chaves SSH ou filesystem do host.
+
+## Cloudflare Tunnel
 
 Crie um único tunnel persistente e associe um hostname estável, por exemplo
 `gptlink.example.com`, apontando para `http://127.0.0.1:8000`. O tunnel é
@@ -40,3 +53,18 @@ coloque token no Git e não altere DNS, firewall ou SSH automaticamente.
 Em produção defina `GPTLINK_ENV=production`, use `https://` para MCP e `wss://`
 para Agents. O endpoint local não precisa escutar em uma porta pública quando o
 Tunnel estiver ativo.
+
+Exemplo conceitual de ingress do `cloudflared` (não contém credenciais):
+
+```yaml
+ingress:
+  - hostname: gptlink.example.com
+    service: http://127.0.0.1:8000
+  - service: http_status:404
+```
+
+O resultado público é `https://gptlink.example.com/mcp` para MCP e
+`wss://gptlink.example.com/agent/ws` para Agents. O Tunnel não substitui bearer
+MCP, autenticação do dispositivo, autorização/lease/replay no Gateway nem a
+policy local do Agent. DNS e criação do tunnel permanecem ações manuais do
+operador.

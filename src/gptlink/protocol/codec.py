@@ -4,7 +4,7 @@ from pydantic import TypeAdapter
 
 from gptlink.protocol.messages import ProtocolMessage
 
-_MESSAGE_ADAPTER = TypeAdapter(ProtocolMessage)
+_MESSAGE_ADAPTER: TypeAdapter[ProtocolMessage] = TypeAdapter(ProtocolMessage)
 
 
 def encode_message(message: ProtocolMessage) -> str:

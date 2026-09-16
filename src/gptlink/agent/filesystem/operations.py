@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from heapq import nsmallest
 from pathlib import Path
@@ -101,7 +102,7 @@ class FilesystemOperations:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
 
-    def search(self, path: str | Path, query: str) -> list[FilesystemEntry]:
+    def search(self, path: str | Path, query: str) -> Sequence[FilesystemEntry]:
         self._require(Capability.FILESYSTEM_SEARCH)
         root = self.paths.resolve_existing(path)
         if not root.is_dir():
