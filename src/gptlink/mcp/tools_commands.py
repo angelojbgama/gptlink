@@ -28,12 +28,18 @@ def register(
         timeout_seconds: float = 30,
     ) -> JobStarted:
         """Start a bounded job with an explicit shell, lease, and request ID."""
+        shell_capability = {
+            ShellKind.BASH: Capability.COMMAND_START,
+            ShellKind.POWERSHELL: Capability.SHELL_POWERSHELL,
+            ShellKind.CMD: Capability.SHELL_CMD,
+            ShellKind.WSL: Capability.SHELL_WSL,
+        }[shell]
         return await operations.mutate(
             device_id=device_id,
             caller=caller,
             request_id=request_id,
             lease_id=lease_id,
-            capability=Capability.COMMAND_START,
+            capability=(Capability.COMMAND_START, shell_capability),
             action="command.start",
             execute=lambda: remote.command_start(
                 device_id, request_id, command, shell, cwd, timeout_seconds

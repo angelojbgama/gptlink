@@ -12,6 +12,9 @@ class Capability(StrEnum):
     COMMAND_START = "command.start"
     GIT_READ = "git.read"
     PROCESS_READ = "process.read"
+    SHELL_POWERSHELL = "shell.powershell"
+    SHELL_CMD = "shell.cmd"
+    SHELL_WSL = "shell.wsl"
 
 
 class PermissionLevel(StrEnum):

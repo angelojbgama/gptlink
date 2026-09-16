@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     gateway_url: str = "http://127.0.0.1:8000"
     database_url: str = "sqlite+aiosqlite:///./gptlink.db"
     agent_roots: list[Path] = Field(default_factory=list)
+    agent_wsl_roots: list[str] = Field(default_factory=list)
     agent_permission_level: PermissionLevel = PermissionLevel.READ_ONLY
     max_concurrent_jobs: int = Field(default=2, ge=1)
     max_command_length: int = Field(default=4096, ge=1)
@@ -67,6 +68,13 @@ class Settings(BaseSettings):
             if root == Path("/") or normalized_root == "c:":
                 msg = "agent_roots must not include / or C:\\\\"
                 raise ValueError(msg)
+        return roots
+
+    @field_validator("agent_wsl_roots")
+    @classmethod
+    def reject_wsl_universal_root(cls, roots: list[str]) -> list[str]:
+        if any(root == "/" or not root.startswith("/") or "\\" in root for root in roots):
+            raise ValueError("agent_wsl_roots require specific Linux absolute paths")
         return roots
 
     @model_validator(mode="after")

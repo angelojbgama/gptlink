@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from gptlink.common.types import JobStatus, ShellKind
 
-from .executors.base import JobResult, OutputChunk
+from .executors.base import Executor, JobResult, OutputChunk
 from .executors.linux import LinuxExecutor
 
 
@@ -24,10 +25,20 @@ class _Job:
 
 
 class JobManager:
-    def __init__(self, *, max_output_bytes: int = 1_048_576, max_concurrent_jobs: int = 2) -> None:
+    def __init__(
+        self,
+        *,
+        max_output_bytes: int = 1_048_576,
+        max_concurrent_jobs: int = 2,
+        executor: Executor | None = None,
+    ) -> None:
         self.max_output_bytes = max_output_bytes
         self.semaphore = asyncio.Semaphore(max_concurrent_jobs)
-        self.executor = LinuxExecutor()
+        if executor is None and os.name == "nt":
+            from .executors.windows_process import WindowsExecutor
+
+            executor = WindowsExecutor()
+        self.executor = executor or LinuxExecutor()
         self._jobs: dict[UUID, _Job] = {}
 
     async def start(
@@ -37,7 +48,7 @@ class JobManager:
         request_id: UUID,
         command: str,
         shell: ShellKind,
-        cwd: Path,
+        cwd: Path | str,
         timeout: float,
     ) -> UUID:
         if not command or timeout <= 0:
@@ -51,7 +62,7 @@ class JobManager:
         return job_id
 
     async def _run(
-        self, job_id: UUID, command: str, shell: ShellKind, cwd: Path, timeout: float
+        self, job_id: UUID, command: str, shell: ShellKind, cwd: Path | str, timeout: float
     ) -> JobResult:
         job = self._jobs[job_id]
         async with self.semaphore:
@@ -78,7 +89,9 @@ class JobManager:
         job.result = result
         return result
 
-    async def _execute(self, job: _Job, command: str, shell: ShellKind, cwd: Path) -> JobResult:
+    async def _execute(
+        self, job: _Job, command: str, shell: ShellKind, cwd: Path | str
+    ) -> JobResult:
         async def on_chunk(chunk: OutputChunk) -> bool:
             encoded_size = len(chunk.data.encode("utf-8"))
             if job.output_bytes + encoded_size > self.max_output_bytes:

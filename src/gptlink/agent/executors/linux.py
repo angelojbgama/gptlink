@@ -37,7 +37,7 @@ class LinuxExecutor:
         job_id: UUID,
         command: str,
         shell: ShellKind,
-        cwd: Path,
+        cwd: Path | str,
         on_chunk: ChunkCallback,
         on_process: Callable[[asyncio.subprocess.Process], None] | None = None,
     ) -> tuple[int | None, bool]:

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import platform
 import socket
 from pathlib import Path
 
 import typer
 
 from gptlink.agent.client import CredentialStore, PairMetadata
-from gptlink.agent.runtime import build_linux_agent
+from gptlink.agent.runtime import build_agent
 from gptlink.common.config import Settings
 
 app = typer.Typer(help="GPTLink outbound Agent")
@@ -23,14 +24,15 @@ def credential_path() -> Path:
 def pair(
     gateway: str = typer.Option(...),
     code: str = typer.Option(...),
-    display_name: str = typer.Option("Linux Dev Agent"),
+    display_name: str = typer.Option("GPTLink Agent"),
     path: Path | None = typer.Option(None, help="Credential file path"),
 ) -> None:
     settings = Settings(gateway_url=gateway)
     store = CredentialStore(path or credential_path())
-    client = build_linux_agent(settings, store)
+    client = build_agent(settings, store)
     metadata = PairMetadata(
         display_name=display_name,
+        platform=platform.system().lower(),
         hostname=socket.gethostname(),
         capabilities=sorted(client.capabilities, key=lambda item: item.value),
     )
@@ -43,6 +45,6 @@ def run(path: Path | None = typer.Option(None, help="Credential file path")) -> 
     configured = Settings()
     store = CredentialStore(path or credential_path())
     try:
-        asyncio.run(build_linux_agent(configured, store).run())
+        asyncio.run(build_agent(configured, store).run())
     except KeyboardInterrupt:
         return

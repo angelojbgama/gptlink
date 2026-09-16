@@ -15,6 +15,7 @@ from gptlink.persistence.models import Device
 from gptlink.persistence.repositories import DeviceRepository
 
 Result = TypeVar("Result")
+RequiredCapabilities = Capability | tuple[Capability, ...]
 
 
 class AuthorizationError(GPTLinkError):
@@ -165,7 +166,7 @@ class GatewayOperations:
         *,
         device_id: UUID,
         caller: str,
-        capability: Capability,
+        capability: RequiredCapabilities,
         action: str,
         execute: Callable[[], Awaitable[Result]],
         request_id: UUID | None = None,
@@ -207,7 +208,7 @@ class GatewayOperations:
         caller: str,
         request_id: UUID,
         lease_id: UUID,
-        capability: Capability,
+        capability: RequiredCapabilities,
         action: str,
         execute: Callable[[], Awaitable[Result]],
         risk_level: str = "MEDIUM",
@@ -246,7 +247,7 @@ class GatewayOperations:
         return result
 
     async def _authorize(
-        self, device_id: UUID, capability: Capability | None, *, mutation: bool
+        self, device_id: UUID, capability: RequiredCapabilities | None, *, mutation: bool
     ) -> Device:
         async with self.database.transaction() as session:
             device = await DeviceRepository(session).get(device_id)
@@ -254,7 +255,14 @@ class GatewayOperations:
                 raise AuthorizationError("device is not authorized")
             if device.status is DeviceStatus.REVOKED or device.revoked_at is not None:
                 raise AuthorizationError("device is revoked")
-            if capability is not None and capability not in device.capabilities:
+            required = (
+                ()
+                if capability is None
+                else capability
+                if isinstance(capability, tuple)
+                else (capability,)
+            )
+            if any(item not in device.capabilities for item in required):
                 raise AuthorizationError("required capability is unavailable")
             if mutation and device.permission_level not in {
                 PermissionLevel.READ_WRITE,

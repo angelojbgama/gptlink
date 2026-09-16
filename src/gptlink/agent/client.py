@@ -97,7 +97,7 @@ class CredentialStore:
 
 
 class AgentClient:
-    """Outbound-only Linux Agent transport."""
+    """Outbound-only Agent transport shared by supported platforms."""
 
     def __init__(
         self,

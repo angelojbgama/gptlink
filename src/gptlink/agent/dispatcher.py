@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import asdict
+from typing import Any, Protocol
 
 from gptlink.agent.filesystem.operations import FilesystemOperations
 from gptlink.agent.jobs import JobManager
-from gptlink.agent.read_operations import GitReadService, ProcessReadService
+from gptlink.agent.read_operations import GitReadService
+from gptlink.common.types import ShellKind
 from gptlink.protocol.messages import (
     CommandCancel,
     CommandOutputRequest,
@@ -28,6 +31,10 @@ from gptlink.protocol.messages import (
 )
 
 
+class ProcessReader(Protocol):
+    def list(self) -> Sequence[Any]: ...
+
+
 class AgentDispatcher:
     """The Agent-side policy boundary; it has no knowledge of MCP."""
 
@@ -36,7 +43,7 @@ class AgentDispatcher:
         filesystem: FilesystemOperations,
         jobs: JobManager,
         git: GitReadService,
-        processes: ProcessReadService,
+        processes: ProcessReader,
     ) -> None:
         self.filesystem = filesystem
         self.jobs = jobs
@@ -88,7 +95,11 @@ class AgentDispatcher:
             processes = await asyncio.to_thread(self.processes.list)
             return [asdict(process) for process in processes]
         if isinstance(message, CommandStart):
-            cwd = self.filesystem.paths.resolve_existing(message.payload.cwd)
+            cwd = (
+                message.payload.cwd
+                if message.payload.shell is ShellKind.WSL
+                else self.filesystem.paths.resolve_existing(message.payload.cwd)
+            )
             job_id = await self.jobs.start(
                 device_id=message.device_id,
                 request_id=message.request_id,
