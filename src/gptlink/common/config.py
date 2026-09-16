@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from gptlink.chat.web2api import validate_loopback_url
 from gptlink.common.types import PermissionLevel
 
 
@@ -36,6 +37,10 @@ class Settings(BaseSettings):
     max_file_bytes: int = Field(default=1_048_576, ge=1)
     max_search_results: int = Field(default=1_000, ge=1)
     max_job_output_bytes: int = Field(default=1_048_576, ge=1)
+    chat_backend: Literal["web2api"] = "web2api"
+    web2api_url: str = "http://127.0.0.1:8081"
+    local_audit_path: Path = Path("~/.gptlink/local-audit.jsonl")
+    local_max_actions_per_turn: int = Field(default=20, ge=1, le=100)
     heartbeat_interval: float = Field(default=10, gt=0, allow_inf_nan=False)
     offline_threshold: float = Field(default=30, gt=0, allow_inf_nan=False)
     handshake_timeout: float = Field(default=10, gt=0, allow_inf_nan=False)
@@ -58,6 +63,11 @@ class Settings(BaseSettings):
         if token is not None and len(token.get_secret_value()) < 32:
             raise ValueError("mcp_token must contain at least 32 characters")
         return token
+
+    @field_validator("web2api_url")
+    @classmethod
+    def require_loopback_chat_backend(cls, value: str) -> str:
+        return validate_loopback_url(value)
 
     @field_validator("agent_roots")
     @classmethod

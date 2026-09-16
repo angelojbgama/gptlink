@@ -50,6 +50,14 @@ def test_settings_have_conservative_defaults() -> None:
     assert settings.max_job_output_bytes == 1_048_576
     assert settings.mcp_token is None
     assert settings.agent_permission_level is PermissionLevel.READ_ONLY
+    assert settings.chat_backend == "web2api"
+    assert settings.web2api_url == "http://127.0.0.1:8081"
+    assert settings.local_max_actions_per_turn == 20
+
+
+def test_chat_backend_environment_is_loopback_only() -> None:
+    with pytest.raises(ValidationError, match="loopback|127.0.0.1"):
+        Settings(_env_file=None, web2api_url="http://example.test:8081")
 
 
 def test_mcp_token_must_be_strong_and_is_masked_in_settings_repr() -> None:
