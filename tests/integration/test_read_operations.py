@@ -1,6 +1,7 @@
 """Safe read-only Git and process operations."""
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,7 @@ async def test_git_requires_capability(repository: Path):
         await service.status(repository)
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux-only /proc process listing")
 def test_process_list_is_bounded_and_requires_capability():
     service = ProcessReadService({Capability.PROCESS_READ}, max_results=20)
     processes = service.list()

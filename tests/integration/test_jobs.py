@@ -10,6 +10,8 @@ import pytest
 from gptlink.agent.jobs import JobManager
 from gptlink.common.types import JobStatus, ShellKind, StreamKind
 
+pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="Linux-only process groups")
+
 
 @pytest.mark.asyncio
 async def test_job_streams_both_output_streams_and_finishes(tmp_path: Path):

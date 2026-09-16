@@ -58,8 +58,9 @@ class CredentialStore:
         self.path.parent.chmod(self.path.parent.stat().st_mode | stat.S_IRWXU)
         fd, temporary = tempfile.mkstemp(prefix=f".{self.path.name}.", dir=self.path.parent)
         try:
-            os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                if hasattr(os, "fchmod"):
+                    os.fchmod(handle.fileno(), 0o600)
                 json.dump(asdict(credential), handle, separators=(",", ":"))
                 handle.write("\n")
                 handle.flush()

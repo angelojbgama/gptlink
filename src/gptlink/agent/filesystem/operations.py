@@ -81,16 +81,18 @@ class FilesystemOperations:
         parent = self.paths.resolve(target.parent)
         if not parent.is_dir():
             raise ValueError("parent directory does not exist")
-        with tempfile.NamedTemporaryFile(
-            "wb", dir=parent, prefix=f".{target.name}.", delete=False
-        ) as handle:
-            temporary = Path(handle.name)
-            try:
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "wb", dir=parent, prefix=f".{target.name}.", delete=False
+            ) as handle:
+                temporary = Path(handle.name)
                 handle.write(encoded)
                 handle.flush()
                 os.fsync(handle.fileno())
-                os.replace(temporary, target)
-            finally:
+            os.replace(temporary, target)
+        finally:
+            if temporary is not None:
                 temporary.unlink(missing_ok=True)
 
     def search(self, path: str | Path, query: str) -> list[FilesystemEntry]:
