@@ -36,7 +36,7 @@ def test_console_entry_points_are_importable_and_expose_cli_commands() -> None:
 
 def test_settings_have_conservative_defaults() -> None:
     """A default deployment stays local, uses SQLite, and permits no roots."""
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.env == "development"
     assert settings.gateway_host == "127.0.0.1"
@@ -106,21 +106,21 @@ def test_common_enums_have_stable_wire_values() -> None:
 def test_production_rejects_non_tls_gateway_url() -> None:
     """A production Agent cannot be pointed at a cleartext Gateway."""
     with pytest.raises(ValidationError, match="HTTPS or WSS"):
-        Settings(env="production", gateway_url="http://gateway.example.test")
+        Settings(_env_file=None, env="production", gateway_url="http://gateway.example.test")
 
 
 def test_production_requires_mcp_bearer() -> None:
     with pytest.raises(ValidationError, match="requires mcp_token"):
-        Settings(env="production", gateway_url="https://gateway.example.test")
+        Settings(_env_file=None, env="production", gateway_url="https://gateway.example.test")
 
 
 def test_agent_root_cannot_be_filesystem_root() -> None:
     """An Agent policy never grants access to the entire host filesystem."""
     with pytest.raises(ValidationError, match="must not include /"):
-        Settings(agent_roots=[Path("/")])
+        Settings(_env_file=None, agent_roots=[Path("/")])
 
 
 def test_agent_root_cannot_be_windows_filesystem_root() -> None:
     """The root policy rejects `C:\\` even when tests run on POSIX."""
     with pytest.raises(ValidationError, match=r"must not include / or C:\\\\"):
-        Settings(agent_roots=[Path(r"C:\\")])
+        Settings(_env_file=None, agent_roots=[Path(r"C:\\")])
