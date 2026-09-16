@@ -10,10 +10,10 @@ import typer
 import uvicorn
 
 from gptlink.common.config import Settings
-from gptlink.common.types import DeviceStatus
+from gptlink.common.types import DeviceStatus, PermissionLevel
 from gptlink.gateway.pairing import PairingService
 from gptlink.persistence.database import Database
-from gptlink.persistence.repositories import DeviceRepository
+from gptlink.persistence.repositories import DevicePermissionError, DeviceRepository
 
 app = typer.Typer(help="GPTLink Gateway administration")
 gateway_app = typer.Typer(help="Run the Gateway")
@@ -88,22 +88,48 @@ def devices_list() -> None:
 
 
 @devices_app.command("show")
-def devices_show(device: str) -> None:
+def devices_show(device: UUID) -> None:
     async def run():
         db = await _init_db()
         try:
             async with db.transaction() as session:
-                return await DeviceRepository(session).get(UUID(device))
+                return await DeviceRepository(session).get(device)
         finally:
             await db.close()
 
     record = asyncio.run(run())
     if record is None:
         raise typer.BadParameter("unknown device")
+    capabilities = ",".join(capability.value for capability in record.capabilities)
     typer.echo(
-        f"{record.device_id}\nplatform={record.platform}\nstatus={record.status.value}\n"
+        f"device_id={record.device_id}\n"
+        f"display_name={record.display_name}\n"
+        f"platform={record.platform}\n"
+        f"status={record.status.value}\n"
+        f"permission_level={record.permission_level.value}\n"
+        f"capabilities={capabilities}\n"
         f"last_seen={record.last_seen}"
     )
+
+
+@devices_app.command("set-permission")
+def devices_set_permission(device: UUID, level: PermissionLevel) -> None:
+    async def run() -> tuple[PermissionLevel, PermissionLevel]:
+        db = await _init_db()
+        try:
+            async with db.transaction() as session:
+                changed = await DeviceRepository(session).set_permission(device, level)
+                if changed is None:
+                    raise ValueError("unknown device")
+                return changed
+        finally:
+            await db.close()
+
+    try:
+        previous, current = asyncio.run(run())
+    except (DevicePermissionError, ValueError) as error:
+        raise typer.BadParameter(str(error)) from error
+    typer.echo(f"device {device} permission {previous.value} -> {current.value}")
 
 
 @devices_app.command("revoke")

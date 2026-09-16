@@ -76,6 +76,70 @@ async def test_device_roundtrip_preserves_fields_enums_and_normalizes_utc(databa
         assert await DeviceRepository(session).get(uuid4()) is None
 
 
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ("READ_ONLY", "READ_WRITE"),
+        ("READ_WRITE", "READ_ONLY"),
+        ("READ_WRITE", "FULL_ACCESS"),
+    ],
+)
+async def test_set_device_permission_changes_only_permission(database, before, after):
+    from gptlink.common.types import PermissionLevel
+    from gptlink.persistence.repositories import DeviceRepository
+
+    record = device()
+    record.permission_level = PermissionLevel(before)
+    original = {
+        "capabilities": list(record.capabilities),
+        "device_token_hash": record.device_token_hash,
+        "status": record.status,
+        "revoked_at": record.revoked_at,
+    }
+    async with database.transaction() as session:
+        await DeviceRepository(session).add(record)
+    async with database.transaction() as session:
+        changed = await DeviceRepository(session).set_permission(
+            record.device_id, PermissionLevel(after)
+        )
+        assert changed == (PermissionLevel(before), PermissionLevel(after))
+    async with database.transaction() as session:
+        found = await DeviceRepository(session).get(record.device_id)
+        assert found is not None
+        assert found.permission_level is PermissionLevel(after)
+        assert found.capabilities == original["capabilities"]
+        assert found.device_token_hash == original["device_token_hash"]
+        assert found.status is original["status"]
+        assert found.revoked_at is original["revoked_at"]
+
+
+async def test_set_device_permission_handles_unknown_and_rejects_revoked(database):
+    from gptlink.common.types import DeviceStatus, PermissionLevel
+    from gptlink.persistence.repositories import DevicePermissionError, DeviceRepository
+
+    async with database.transaction() as session:
+        assert (
+            await DeviceRepository(session).set_permission(uuid4(), PermissionLevel.READ_WRITE)
+            is None
+        )
+
+    record = device()
+    record.status = DeviceStatus.REVOKED
+    record.revoked_at = datetime(2026, 9, 16, tzinfo=UTC)
+    record.permission_level = PermissionLevel.READ_ONLY
+    async with database.transaction() as session:
+        await DeviceRepository(session).add(record)
+    with pytest.raises(DevicePermissionError, match="revoked"):
+        async with database.transaction() as session:
+            await DeviceRepository(session).set_permission(
+                record.device_id, PermissionLevel.READ_WRITE
+            )
+    async with database.transaction() as session:
+        found = await DeviceRepository(session).get(record.device_id)
+        assert found is not None
+        assert found.permission_level is PermissionLevel.READ_ONLY
+
+
 async def test_transaction_rollback_and_naive_timestamp_rejection(database):
     from sqlalchemy.exc import StatementError
 

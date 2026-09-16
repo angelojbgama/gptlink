@@ -12,7 +12,7 @@ from sqlalchemy import case, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gptlink.common.types import ApprovalStatus, DeviceStatus
+from gptlink.common.types import ApprovalStatus, DeviceStatus, PermissionLevel
 from gptlink.persistence.models import (
     Approval,
     AuditEvent,
@@ -41,8 +41,25 @@ class Repository[Entity: Base, Key]:
         return await self.session.get(self.model, key)
 
 
+class DevicePermissionError(Exception):
+    """A device state forbids an administrative permission change."""
+
+
 class DeviceRepository(Repository[Device, UUID]):
     model = Device
+
+    async def set_permission(
+        self, device_id: UUID, permission: PermissionLevel
+    ) -> tuple[PermissionLevel, PermissionLevel] | None:
+        device = await self.get(device_id)
+        if device is None:
+            return None
+        if device.status is DeviceStatus.REVOKED or device.revoked_at is not None:
+            raise DevicePermissionError("revoked device permission cannot be changed")
+        previous = device.permission_level
+        device.permission_level = permission
+        await self.session.flush()
+        return previous, permission
 
     async def mark_online(self, device_id: UUID, *, now: datetime) -> bool:
         """Presence never overrides concurrent revocation."""
