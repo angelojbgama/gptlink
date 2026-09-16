@@ -21,15 +21,17 @@ from gptlink.common.types import (
 )
 
 
-def test_console_entry_points_are_importable_and_safe() -> None:
-    """Installed console entry points can start before Task 6 adds commands."""
+def test_console_entry_points_are_importable_and_expose_cli_commands() -> None:
+    """Installed console entry points expose the real Typer command trees."""
+    import typer
+
     from gptlink.agent.__main__ import app as agent_app
     from gptlink.cli.main import app as gateway_app
 
     assert callable(gateway_app)
     assert callable(agent_app)
-    assert gateway_app() == 0
-    assert agent_app() == 0
+    assert isinstance(gateway_app, typer.Typer)
+    assert isinstance(agent_app, typer.Typer)
 
 
 def test_settings_have_conservative_defaults() -> None:

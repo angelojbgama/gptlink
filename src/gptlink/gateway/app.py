@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from gptlink.common.config import Settings
 from gptlink.gateway.health import router as health_router
+from gptlink.gateway.pairing_api import router as pairing_router
 from gptlink.gateway.registry import ConnectionRegistry
 from gptlink.gateway.websocket import router as websocket_router
 from gptlink.persistence.database import Database
@@ -58,5 +59,6 @@ def create_app(settings: Settings, *, database: Database | None = None) -> FastA
     app.state.registry = registry
     app.state.ready = False
     app.include_router(health_router)
+    app.include_router(pairing_router)
     app.include_router(websocket_router)
     return app
