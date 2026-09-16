@@ -8,7 +8,8 @@ from pathlib import Path
 
 import typer
 
-from gptlink.agent.client import AgentClient, CredentialStore, PairMetadata
+from gptlink.agent.client import CredentialStore, PairMetadata
+from gptlink.agent.runtime import build_linux_agent
 from gptlink.common.config import Settings
 
 app = typer.Typer(help="GPTLink outbound Agent")
@@ -27,8 +28,13 @@ def pair(
 ) -> None:
     settings = Settings(gateway_url=gateway)
     store = CredentialStore(path or credential_path())
-    metadata = PairMetadata(display_name=display_name, hostname=socket.gethostname())
-    credential = asyncio.run(AgentClient(settings, store).pair(gateway, code, metadata))
+    client = build_linux_agent(settings, store)
+    metadata = PairMetadata(
+        display_name=display_name,
+        hostname=socket.gethostname(),
+        capabilities=sorted(client.capabilities, key=lambda item: item.value),
+    )
+    credential = asyncio.run(client.pair(gateway, code, metadata))
     typer.echo(f"Paired device {credential.device_id}")
 
 
@@ -37,6 +43,6 @@ def run(path: Path | None = typer.Option(None, help="Credential file path")) -> 
     configured = Settings()
     store = CredentialStore(path or credential_path())
     try:
-        asyncio.run(AgentClient(configured, store).run())
+        asyncio.run(build_linux_agent(configured, store).run())
     except KeyboardInterrupt:
         return

@@ -48,6 +48,16 @@ def test_settings_have_conservative_defaults() -> None:
     assert settings.max_file_bytes == 1_048_576
     assert settings.max_search_results == 1_000
     assert settings.max_job_output_bytes == 1_048_576
+    assert settings.mcp_token is None
+    assert settings.agent_permission_level is PermissionLevel.READ_ONLY
+
+
+def test_mcp_token_must_be_strong_and_is_masked_in_settings_repr() -> None:
+    with pytest.raises(ValidationError, match="at least 32"):
+        Settings(_env_file=None, mcp_token="too-short")
+    token = "strong-token-value-that-is-never-rendered"
+    settings = Settings(_env_file=None, mcp_token=token)
+    assert token not in repr(settings)
 
 
 def test_common_enums_have_stable_wire_values() -> None:

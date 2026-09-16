@@ -15,13 +15,21 @@ from gptlink.persistence.database import Database
 from gptlink.persistence.models import utc_now
 from gptlink.persistence.repositories import DeviceRepository
 from gptlink.protocol.codec import encode_message
-from gptlink.protocol.messages import ProtocolMessage
+from gptlink.protocol.messages import Error, OperationResult, ProtocolMessage
 
 logger = logging.getLogger(__name__)
 
 
 class ConnectionUnavailable(Exception):
     """Device has disconnected or its connection changed during a send."""
+
+
+class RemoteOperationError(Exception):
+    """The Agent rejected an operation without exposing its untrusted message."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__("Agent rejected operation")
+        self.code = code
 
 
 @dataclass(eq=False)
@@ -48,6 +56,7 @@ class ConnectionRegistry:
     def __init__(self, database: Database) -> None:
         self.database = database
         self._connections: dict[UUID, Connection] = {}
+        self._pending: dict[tuple[UUID, UUID], tuple[Connection, asyncio.Future[object]]] = {}
         self._lock = asyncio.Lock()
 
     async def register(self, device_id: UUID, socket: WebSocket) -> Connection:
@@ -103,11 +112,19 @@ class ConnectionRegistry:
             connection.last_seen = monotonic()
 
     async def disconnect(self, connection: Connection) -> None:
+        pending: list[asyncio.Future[object]] = []
         async with self._lock:
             if self._connections.get(connection.device_id) is connection:
                 async with self.database.transaction() as session:
                     await DeviceRepository(session).mark_offline(connection.device_id)
                 del self._connections[connection.device_id]
+            for key, (owner, future) in list(self._pending.items()):
+                if owner is connection:
+                    del self._pending[key]
+                    pending.append(future)
+        for future in pending:
+            if not future.done():
+                future.set_exception(ConnectionUnavailable("device disconnected"))
 
     async def send(self, device_id: UUID, message: ProtocolMessage) -> None:
         if message.device_id != device_id:
@@ -124,6 +141,53 @@ class ConnectionRegistry:
         if self._connections.get(device_id) is not connection:
             raise ConnectionUnavailable("connection replaced during send")
 
+    async def request(
+        self, device_id: UUID, message: ProtocolMessage, *, timeout: float = 30
+    ) -> object:
+        """Send once and await the response with the same request ID."""
+        connection = self._connections.get(device_id)
+        if connection is None:
+            raise ConnectionUnavailable("device is offline")
+        key = (device_id, message.request_id)
+        future: asyncio.Future[object] = asyncio.get_running_loop().create_future()
+        async with self._lock:
+            if key in self._pending:
+                raise ValueError("request ID is already pending")
+            self._pending[key] = (connection, future)
+        try:
+            await self.send(device_id, message)
+            async with asyncio.timeout(timeout):
+                return await future
+        finally:
+            async with self._lock:
+                current = self._pending.get(key)
+                if current is not None and current[1] is future:
+                    del self._pending[key]
+            if future.done() and not future.cancelled():
+                future.exception()
+            elif not future.done():
+                future.cancel()
+
+    async def resolve(self, connection: Connection, message: ProtocolMessage) -> bool:
+        if not isinstance(message, (OperationResult, Error)):
+            return False
+        key = (connection.device_id, message.request_id)
+        async with self._lock:
+            pending = self._pending.get(key)
+            if pending is None:
+                return True  # A valid response may arrive just after its caller timed out.
+            if pending[0] is not connection:
+                return True
+            del self._pending[key]
+        future = pending[1]
+        if future.done():
+            return True
+        if isinstance(message, Error):
+            future.set_exception(RemoteOperationError(message.payload.code))
+        else:
+            future.set_result(message.payload.result)
+        return True
+
     async def expire(self, threshold: float) -> None:
         expired = []
         async with self._lock:
@@ -137,6 +201,7 @@ class ConnectionRegistry:
             await close_connection(connection, 4408)
 
     async def close(self) -> None:
+        pending: list[asyncio.Future[object]] = []
         async with self._lock:
             connections = list(self._connections.values())
             for connection in connections:
@@ -147,5 +212,10 @@ class ConnectionRegistry:
                     logger.warning("Shutdown presence update failed (%s)", type(error).__name__)
                 finally:
                     del self._connections[connection.device_id]
+            pending = [future for _, future in self._pending.values()]
+            self._pending.clear()
+        for future in pending:
+            if not future.done():
+                future.set_exception(ConnectionUnavailable("Gateway is shutting down"))
         for connection in connections:
             await close_connection(connection, 1001)

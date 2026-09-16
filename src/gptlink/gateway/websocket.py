@@ -89,9 +89,11 @@ async def agent_websocket(socket: WebSocket) -> None:
             message = await receive_message(socket)
             if message.device_id != connection.device_id:
                 raise ProtocolClose(4401)
+            await registry.touch(connection)
+            if await registry.resolve(connection, message):
+                continue
             if not isinstance(message, HeartbeatPing):
                 raise ProtocolClose(4400)
-            await registry.touch(connection)
             pong = HeartbeatPong(
                 protocol_version=1,
                 type="heartbeat.pong",

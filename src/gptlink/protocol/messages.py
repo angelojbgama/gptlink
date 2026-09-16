@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Final, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 from gptlink.common.types import Capability, JobStatus, ShellKind, StreamKind
 from gptlink.protocol.version import PROTOCOL_VERSION
@@ -83,6 +83,7 @@ class CommandStartPayload(ProtocolModel):
     command: str = Field(min_length=1)
     shell: ShellKind
     cwd: str = Field(min_length=1)
+    timeout: float = Field(default=30, gt=0, le=86_400, allow_inf_nan=False)
 
 
 class CommandStartedPayload(ProtocolModel):
@@ -124,6 +125,16 @@ class CommandCancelPayload(ProtocolModel):
     reason: str = Field(min_length=1)
 
 
+class CommandStatusPayload(ProtocolModel):
+    """An intentionally argument-free command status request."""
+
+
+class CommandOutputRequestPayload(ProtocolModel):
+    """Request command output after an optional sequence cursor."""
+
+    after_sequence: int = Field(default=-1, ge=-1)
+
+
 class FilesystemListPayload(ProtocolModel):
     """A bounded directory listing request."""
 
@@ -160,11 +171,17 @@ class GitDiffPayload(ProtocolModel):
     """A Git diff request rooted at a sandboxed repository path."""
 
     path: str = Field(min_length=1)
-    revision: str = Field(min_length=1)
+    revision: str | None = Field(default=None, min_length=1)
 
 
 class ProcessListPayload(ProtocolModel):
     """An intentionally argument-free process listing request."""
+
+
+class OperationResultPayload(ProtocolModel):
+    """A JSON-safe result correlated to one Gateway request."""
+
+    result: JsonValue
 
 
 class ErrorPayload(ProtocolModel):
@@ -258,6 +275,20 @@ class CommandCancel(JobEnvelope):
     payload: CommandCancelPayload
 
 
+class CommandStatus(JobEnvelope):
+    """Gateway request for current in-memory command job status."""
+
+    type: Literal["command.status"]
+    payload: CommandStatusPayload
+
+
+class CommandOutputRequest(JobEnvelope):
+    """Gateway request for bounded command job output."""
+
+    type: Literal["command.output.request"]
+    payload: CommandOutputRequestPayload
+
+
 class FilesystemList(Envelope):
     """Gateway request for a sandboxed directory listing."""
 
@@ -307,6 +338,13 @@ class ProcessList(Envelope):
     payload: ProcessListPayload
 
 
+class OperationResult(Envelope):
+    """Agent response to a correlated operation request."""
+
+    type: Literal["operation.result"]
+    payload: OperationResultPayload
+
+
 class Error(Envelope):
     """A response or event reporting a protocol-level failure."""
 
@@ -324,6 +362,8 @@ type ProtocolMessage = Annotated[
     | CommandOutput
     | CommandFinished
     | CommandCancel
+    | CommandStatus
+    | CommandOutputRequest
     | FilesystemList
     | FilesystemRead
     | FilesystemWrite
@@ -331,6 +371,7 @@ type ProtocolMessage = Annotated[
     | GitStatus
     | GitDiff
     | ProcessList
+    | OperationResult
     | Error,
     Field(discriminator="type"),
 ]
@@ -345,6 +386,8 @@ MESSAGE_TYPES: Final = {
     "command.output": CommandOutput,
     "command.finished": CommandFinished,
     "command.cancel": CommandCancel,
+    "command.status": CommandStatus,
+    "command.output.request": CommandOutputRequest,
     "filesystem.list": FilesystemList,
     "filesystem.read": FilesystemRead,
     "filesystem.write": FilesystemWrite,
@@ -352,5 +395,6 @@ MESSAGE_TYPES: Final = {
     "git.status": GitStatus,
     "git.diff": GitDiff,
     "process.list": ProcessList,
+    "operation.result": OperationResult,
     "error": Error,
 }

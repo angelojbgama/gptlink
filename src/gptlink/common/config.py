@@ -4,8 +4,10 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from gptlink.common.types import PermissionLevel
 
 
 class Settings(BaseSettings):
@@ -27,6 +29,7 @@ class Settings(BaseSettings):
     gateway_url: str = "http://127.0.0.1:8000"
     database_url: str = "sqlite+aiosqlite:///./gptlink.db"
     agent_roots: list[Path] = Field(default_factory=list)
+    agent_permission_level: PermissionLevel = PermissionLevel.READ_ONLY
     max_concurrent_jobs: int = Field(default=2, ge=1)
     max_command_length: int = Field(default=4096, ge=1)
     max_file_bytes: int = Field(default=1_048_576, ge=1)
@@ -35,6 +38,15 @@ class Settings(BaseSettings):
     heartbeat_interval: float = Field(default=10, gt=0, allow_inf_nan=False)
     offline_threshold: float = Field(default=30, gt=0, allow_inf_nan=False)
     handshake_timeout: float = Field(default=10, gt=0, allow_inf_nan=False)
+    mcp_token: SecretStr | None = None
+    mcp_caller: str = Field(default="mcp-single-user", min_length=1, max_length=200)
+
+    @field_validator("mcp_token")
+    @classmethod
+    def require_strong_mcp_token(cls, token: SecretStr | None) -> SecretStr | None:
+        if token is not None and len(token.get_secret_value()) < 32:
+            raise ValueError("mcp_token must contain at least 32 characters")
+        return token
 
     @field_validator("agent_roots")
     @classmethod

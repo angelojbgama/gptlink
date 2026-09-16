@@ -8,9 +8,13 @@ from fastapi import FastAPI
 
 from gptlink.common.config import Settings
 from gptlink.gateway.health import router as health_router
+from gptlink.gateway.operations import GatewayOperations
 from gptlink.gateway.pairing_api import router as pairing_router
 from gptlink.gateway.registry import ConnectionRegistry
+from gptlink.gateway.remote import RemoteAgentOperations
 from gptlink.gateway.websocket import router as websocket_router
+from gptlink.mcp.auth import BearerAuthenticator, BearerAuthMiddleware
+from gptlink.mcp.server import create_mcp_server
 from gptlink.persistence.database import Database
 
 logger = logging.getLogger(__name__)
@@ -19,6 +23,9 @@ logger = logging.getLogger(__name__)
 def create_app(settings: Settings, *, database: Database | None = None) -> FastAPI:
     database = database if database is not None else Database(settings.database_url)
     registry = ConnectionRegistry(database)
+    operations = GatewayOperations(database)
+    remote = RemoteAgentOperations(registry)
+    mcp_server = create_mcp_server(operations, remote, caller=settings.mcp_caller)
 
     async def monitor() -> None:
         while True:
@@ -38,9 +45,10 @@ def create_app(settings: Settings, *, database: Database | None = None) -> FastA
         task = None
         try:
             await database.init()
-            task = asyncio.create_task(monitor())
-            app.state.ready = True
-            yield
+            async with mcp_server.session_manager.run():
+                task = asyncio.create_task(monitor())
+                app.state.ready = True
+                yield
         finally:
             app.state.ready = False
             try:
@@ -57,8 +65,21 @@ def create_app(settings: Settings, *, database: Database | None = None) -> FastA
     app.state.settings = settings
     app.state.database = database
     app.state.registry = registry
+    app.state.operations = operations
+    app.state.remote_operations = remote
+    app.state.mcp_server = mcp_server
     app.state.ready = False
     app.include_router(health_router)
     app.include_router(pairing_router)
     app.include_router(websocket_router)
+    mcp_app = mcp_server.streamable_http_app(stateless_http=True, host=settings.gateway_host)
+    token = settings.mcp_token.get_secret_value() if settings.mcp_token is not None else None
+    app.mount(
+        "/",
+        BearerAuthMiddleware(
+            mcp_app,
+            BearerAuthenticator(token, caller=settings.mcp_caller),
+        ),
+        name="mcp",
+    )
     return app

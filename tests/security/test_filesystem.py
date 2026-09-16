@@ -71,3 +71,9 @@ def test_limits_are_enforced(workspace: Path):
         ops.read(workspace / "note.txt")
     with pytest.raises(ValueError, match="file write limit"):
         ops.write(workspace / "too-big.txt", "1234")
+
+
+def test_directory_listing_is_bounded(workspace: Path):
+    for index in range(20):
+        (workspace / f"item-{index:02}.txt").write_text("x", encoding="utf-8")
+    assert len(operations(workspace).list(workspace)) == 10

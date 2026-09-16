@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 from dataclasses import dataclass
+from heapq import nsmallest
 from pathlib import Path
 
 from gptlink.common.types import Capability, PermissionLevel
@@ -48,7 +49,12 @@ class FilesystemOperations:
         if not directory.is_dir():
             raise ValueError("path is not a directory")
         entries: list[FilesystemEntry] = []
-        for child in sorted(directory.iterdir(), key=lambda item: item.name.casefold()):
+        children = nsmallest(
+            self.max_search_results,
+            directory.iterdir(),
+            key=lambda item: item.name.casefold(),
+        )
+        for child in children:
             resolved = self.paths.resolve_existing(child)
             stat = resolved.stat()
             entries.append(

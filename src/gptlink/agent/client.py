@@ -25,9 +25,14 @@ from gptlink.protocol.messages import (
     AgentHello,
     AgentHelloPayload,
     AgentWelcome,
+    Error,
+    ErrorPayload,
     HeartbeatPing,
     HeartbeatPingPayload,
+    HeartbeatPong,
 )
+
+from .dispatcher import AgentDispatcher
 
 
 @dataclass(frozen=True)
@@ -93,9 +98,18 @@ class CredentialStore:
 class AgentClient:
     """Outbound-only Linux Agent transport."""
 
-    def __init__(self, settings: Settings, store: CredentialStore) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        store: CredentialStore,
+        *,
+        dispatcher: AgentDispatcher | None = None,
+        capabilities: set[Capability] | None = None,
+    ) -> None:
         self.settings = settings
         self.store = store
+        self.dispatcher = dispatcher
+        self.capabilities = capabilities or set()
 
     async def pair(self, gateway: str, code: str, metadata: PairMetadata) -> AgentCredential:
         url = gateway.rstrip("/") + "/api/v1/pair"
@@ -160,7 +174,7 @@ class AgentClient:
                 payload=AgentHelloPayload(
                     token=credential.token,
                     versions=(1,),
-                    capabilities=(),
+                    capabilities=tuple(sorted(self.capabilities, key=lambda item: item.value)),
                 ),
             )
             await socket.send(encode_message(hello))
@@ -178,6 +192,23 @@ class AgentClient:
                     decoded = decode_message(message)
                     if decoded.device_id != device_id:
                         raise ConnectionError("Gateway identity mismatch")
+                    if isinstance(decoded, HeartbeatPong):
+                        continue
+                    if self.dispatcher is None:
+                        response = Error(
+                            protocol_version=1,
+                            type="error",
+                            request_id=decoded.request_id,
+                            device_id=device_id,
+                            payload=ErrorPayload(
+                                code="operation_unavailable",
+                                message="Agent operations are not configured",
+                                retryable=False,
+                            ),
+                        )
+                    else:
+                        response = await self.dispatcher.dispatch(decoded)
+                    await socket.send(encode_message(response))
             finally:
                 heartbeat.cancel()
                 with suppress(asyncio.CancelledError):
