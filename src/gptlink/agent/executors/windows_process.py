@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import csv
 import ctypes
-import os
 import subprocess
+import sys
 import threading
 from collections.abc import Awaitable, Callable
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from gptlink.common.types import Capability, ShellKind, StreamKind
@@ -68,7 +69,8 @@ class _NativeJobs:
     PROCESS_SET_QUOTA = 0x0100
 
     def __init__(self) -> None:
-        if os.name != "nt":
+        self.kernel32: Any
+        if sys.platform != "win32":
             raise RuntimeError("Windows Job Objects are unavailable")
         self.kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         self.kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
@@ -91,6 +93,8 @@ class _NativeJobs:
 
     @staticmethod
     def _error(operation: str) -> OSError:
+        if sys.platform != "win32":
+            raise RuntimeError("Windows Job Objects are unavailable")
         code = ctypes.get_last_error()
         return OSError(code, f"{operation} failed: {ctypes.FormatError(code)}")
 
@@ -164,7 +168,13 @@ class WindowsShellExecutor:
     shell: ShellKind
 
     def __init__(self, *, jobs: WindowsJobObjectManager | None = None) -> None:
-        self.jobs = jobs or WindowsJobObjectManager()
+        self._jobs = jobs
+
+    @property
+    def jobs(self) -> WindowsJobObjectManager:
+        if self._jobs is None:
+            self._jobs = WindowsJobObjectManager()
+        return self._jobs
 
     def build_argv(self, command: str, cwd: str | None = None) -> list[str]:
         raise NotImplementedError
