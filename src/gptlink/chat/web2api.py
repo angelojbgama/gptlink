@@ -77,7 +77,17 @@ class Web2APIChatBackend:
             payload = response.json()
         except (httpx.HTTPError, ValueError, TypeError):
             return False
-        return bool(payload.get("status") == "ok" and payload.get("cdp_connected", True))
+        if not isinstance(payload, dict):
+            return False
+        connected = payload.get("driver_connected")
+        if connected is None:
+            connected = payload.get("cdp_connected")
+        return bool(
+            payload.get("status") in {"starting", "healthy"}
+            and payload.get("chrome_running") is True
+            and connected is True
+            and payload.get("open_breakers") == []
+        )
 
     async def list_conversations(self, limit: int = 20) -> list[Conversation]:
         del limit
